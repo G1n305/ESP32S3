@@ -51,11 +51,8 @@ void fadeRGB() {
 void setup() {
   pixels.begin();           // Initialize the NeoPixel library
   pixels.setBrightness(100); // Adjust brightness if needed (0-255)
-  //pinMode(48, 1);
-  //digitalWrite(48, 0);
 }
 
 void loop() {
   fadeRGB();
-  //digitalWrite(48, 1);                 // Call the fade function continuously
 }
