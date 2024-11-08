@@ -1,0 +1,169 @@
+module uart_rx(
+    input wire clk,          // Clock
+    input wire rx,           // UART RX pin
+    output reg [7:0] data,   // Data output
+    output reg ready         // Data ready flag
+);
+    parameter BAUD_RATE = 9600;
+    parameter CLK_FREQ = 50000000;  // Clock frequency (50 MHz)
+
+    // Baud rate calculation
+    localparam integer BAUD_PERIOD = CLK_FREQ / BAUD_RATE;
+    reg [15:0] baud_counter = 0;
+    reg [3:0] bit_index = 0; // Bit index for receiving bits
+
+    reg rx_sample;
+    reg [7:0] shift_reg;
+
+    initial begin
+        ready = 0;
+        bit_index = 0;
+    end
+
+    always @(posedge clk) begin
+        if (baud_counter < BAUD_PERIOD - 1)
+            baud_counter <= baud_counter + 1;
+        else begin
+            baud_counter <= 0;
+
+            if (bit_index == 0) begin
+                if (!rx) begin
+                    // Start bit detected
+                    bit_index <= bit_index + 1;
+                end
+            end else if (bit_index <= 8) begin
+                // Data bits
+                shift_reg <= {rx, shift_reg[7:1]};
+                bit_index <= bit_index + 1;
+            end else if (bit_index == 9) begin
+                // Stop bit
+                data <= shift_reg;
+                ready <= 1;
+                bit_index <= 0;
+            end
+        end
+    end
+endmodule
+
+
+
+module uart_tx(
+    input wire clk,          // Clock
+    input wire [7:0] data,   // Data to transmit
+    input wire start,        // Start transmission flag
+    output reg tx,           // UART TX pin
+    output reg busy          // Transmission busy flag
+);
+    parameter BAUD_RATE = 9600;
+    parameter CLK_FREQ = 50000000;
+
+    localparam integer BAUD_PERIOD = CLK_FREQ / BAUD_RATE;
+    reg [15:0] baud_counter = 0;
+    reg [3:0] bit_index = 0;
+    reg [7:0] shift_reg;
+
+    initial begin
+        tx = 1; // Idle state for UART is high
+        busy = 0;
+    end
+
+    always @(posedge clk) begin
+        if (start && !busy) begin
+            busy <= 1;
+            shift_reg <= data;
+            bit_index <= 0;
+            tx <= 0; // Start bit
+        end else if (busy) begin
+            if (baud_counter < BAUD_PERIOD - 1)
+                baud_counter <= baud_counter + 1;
+            else begin
+                baud_counter <= 0;
+                bit_index <= bit_index + 1;
+
+                if (bit_index < 8)
+                    tx <= shift_reg[bit_index];
+                else if (bit_index == 8)
+                    tx <= 1; // Stop bit
+                else begin
+                    busy <= 0;
+                    tx <= 1;
+                end
+            end
+        end
+    end
+endmodule
+
+
+
+module crc16(
+    input wire clk,
+    input wire [7:0] data,
+    input wire reset,
+    output reg [15:0] crc
+);
+    initial begin
+        crc = 16'hFFFF;
+    end
+
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            crc <= 16'hFFFF;
+        end else begin
+            reg [7:0] x = data ^ crc[7:0];
+            crc <= (crc >> 8) ^ ({8'h0, x} ^ (x << 4)) ^ (x << 12) ^ (x << 5);
+        end
+    end
+endmodule
+
+
+
+module modbus_slave(
+    input wire clk,
+    input wire [7:0] rx_data,
+    input wire rx_ready,
+    output reg [7:0] tx_data,
+    output reg tx_start
+);
+    // Modbus States
+    reg [2:0] state;
+    localparam IDLE = 3'd0;
+    localparam RECEIVE = 3'd1;
+    localparam PROCESS = 3'd2;
+    localparam RESPONSE = 3'd3;
+
+    reg [7:0] modbus_address = 8'h01; // Address of this slave
+    reg [7:0] function_code;
+    reg [15:0] crc;
+
+    always @(posedge clk) begin
+        case (state)
+            IDLE: begin
+                if (rx_ready) begin
+                    state <= RECEIVE;
+                end
+            end
+
+            RECEIVE: begin
+                // Read function code and address, process data
+                function_code <= rx_data;
+                state <= PROCESS;
+            end
+
+            PROCESS: begin
+                if (function_code == 8'h03) begin
+                    // Read Holding Register example
+                    tx_data <= 8'h03; // Example data
+                    tx_start <= 1;
+                    state <= RESPONSE;
+                end else begin
+                    state <= IDLE;
+                end
+            end
+
+            RESPONSE: begin
+                tx_start <= 0;
+                state <= IDLE;
+            end
+        endcase
+    end
+endmodule
